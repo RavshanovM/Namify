@@ -1,5 +1,4 @@
-aiogram==2.25.1
+aiogram==2.25.2
 requests
 asyncio
-json
-random
+python-dotenv

@@ -10,9 +10,15 @@ from aiogram.utils import executor
 import asyncio
 import json
 import random
+import os
+
+from dotenv import load_dotenv
+
 # Константы
-TOKEN = "7519852063:AAHT4lEHc1xc2JZFeCCiD3n5Sm1ZcH3cR8w"
-OWM_TOKEN = "8718b212f5b86944c0236f98618c961c"
+load_dotenv()
+TOKEN = os.getenv("BOT_TOKEN")
+OWM_TOKEN = os.getenv("OWM_TOKEN")
+
 
 # Инициализация бота и диспетчера
 bot = Bot(token=TOKEN)
