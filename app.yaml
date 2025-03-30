@@ -1,0 +1,8 @@
+runtime: python310
+entrypoint: python proverka.py
+
+instance_class: F1  # Минимальная конфигурация для бесплатного использования
+
+automatic_scaling:
+  min_instances: 1
+  max_instances: 2
