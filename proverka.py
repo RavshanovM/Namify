@@ -557,7 +557,6 @@ async def weather_monitor():
                         dt_local = datetime.strptime(forecast["dt_txt"], "%Y-%m-%d %H:%M:%S") + timedelta(
                             seconds=timezone_offset)
                         # Проверяем, находится ли время прогноза в ближайших часах
-                        # Сравниваем только по дате и часу, игнорируя минуты и секунды
                         forecast_hour = dt_local.replace(minute=0, second=0, microsecond=0)
                         for next_hour in next_hours:
                             next_hour_normalized = next_hour.replace(minute=0, second=0, microsecond=0)
@@ -566,26 +565,74 @@ async def weather_monitor():
                                 wind_speed = forecast["wind"]["speed"]
                                 temp = forecast["main"]["temp"]
 
-                                # Проверяем, не отправляли ли мы уже этот прогноз
-                                hour_key = dt_local.hour
+                                # Инициализируем структуры данных если нужно
                                 if user_id not in last_weather:
                                     last_weather[user_id] = {}
                                 if city not in last_weather[user_id]:
                                     last_weather[user_id][city] = {}
 
-                                # Если для этого часа прогноз еще не отправлялся или изменился
-                                if hour_key not in last_weather[user_id][city] or last_weather[user_id][city][
-                                    hour_key] != desc:
+                                hour_key = dt_local.hour
+
+                                # Получаем предыдущий прогноз для сравнения
+                                prev_desc = last_weather[user_id][city].get(f"desc_{hour_key}", None)
+                                prev_temp = last_weather[user_id][city].get(f"temp_{hour_key}", None)
+                                prev_wind = last_weather[user_id][city].get(f"wind_{hour_key}", None)
+
+                                # Проверяем условия для отправки уведомления
+                                should_send = False
+                                reason = []
+
+                                # 1. Проверяем изменение типа погоды (например, с ясно на дождь)
+                                if prev_desc and prev_desc != desc:
+                                    # Категоризация погоды для более значимых сравнений
+                                    prev_category = categorize_weather(prev_desc)
+                                    curr_category = categorize_weather(desc)
+
+                                    if prev_category != curr_category:
+                                        should_send = True
+                                        reason.append(f"Изменение погоды: {prev_desc} → {desc}")
+
+                                # 2. Проверяем сильный ветер (более 10 м/с)
+                                if wind_speed > 10 and (prev_wind is None or prev_wind <= 10):
+                                    should_send = True
+                                    reason.append(f"Сильный ветер: {wind_speed} м/с")
+
+                                # 3. Проверяем резкое изменение температуры (более 5 градусов)
+                                if prev_temp is not None and abs(temp - prev_temp) > 5:
+                                    should_send = True
+                                    change = temp - prev_temp
+                                    direction = "потепление" if change > 0 else "похолодание"
+                                    reason.append(f"Резкое {direction}: {abs(change):.1f}°C")
+
+                                # 4. Проверяем экстремальную температуру
+                                if (temp > 30 and (prev_temp is None or prev_temp <= 30)):
+                                    should_send = True
+                                    reason.append(f"Жаркая погода: {temp}°C")
+                                elif (temp < 0 and (prev_temp is None or prev_temp >= 0)):
+                                    should_send = True
+                                    reason.append(f"Температура ниже нуля: {temp}°C")
+
+                                # Если это первый прогноз для пользователя на этот город и час, тоже отправляем
+                                if prev_desc is None:
+                                    should_send = True
+                                    reason.append("Первый прогноз")
+
+                                if should_send:
                                     alert_msg = (
-                                        f"🌍 Прогноз погоды для {city.capitalize()} на {dt_local.strftime('%d.%m в %H:%M')}:\n"
+                                        f"⚠️ Важное изменение погоды ⚠️\n"
+                                        f"🌍 {city.capitalize()} на {dt_local.strftime('%d.%m в %H:%M')}:\n"
                                         f"🌡 Температура: {temp}°C\n"
                                         f"💨 Ветер: {wind_speed} м/с\n"
                                         f"☁ {desc.capitalize()}\n"
-                                        f"{generate_weather_description(desc, wind_speed, temp)}"
+                                        f"{generate_weather_description(desc, wind_speed, temp)}\n\n"
+                                        f"Причина уведомления: {', '.join(reason)}"
                                     )
                                     alerts.append(alert_msg)
-                                    # Сохраняем отправленный прогноз
-                                    last_weather[user_id][city][hour_key] = desc
+
+                                # Сохраняем текущий прогноз для будущих сравнений
+                                last_weather[user_id][city][f"desc_{hour_key}"] = desc
+                                last_weather[user_id][city][f"temp_{hour_key}"] = temp
+                                last_weather[user_id][city][f"wind_{hour_key}"] = wind_speed
 
                     if alerts:
                         try:
@@ -595,6 +642,26 @@ async def weather_monitor():
 
         await asyncio.sleep(3600)  # Проверка раз в час
 
+
+# Вспомогательная функция для категоризации типов погоды
+def categorize_weather(desc):
+    """
+    Группирует похожие типы погоды в категории для более осмысленных сравнений
+    """
+    desc = desc.lower()
+
+    if any(word in desc for word in ["дождь", "ливень", "гроза"]):
+        return "rain"
+    elif any(word in desc for word in ["снег", "метель", "снегопад"]):
+        return "snow"
+    elif any(word in desc for word in ["туман", "мгла"]):
+        return "fog"
+    elif any(word in desc for word in ["облачно", "пасмурно"]):
+        return "cloudy"
+    elif any(word in desc for word in ["ясно", "солнечно", "чистое небо"]):
+        return "clear"
+    else:
+        return desc  # Если не попадает ни в одну категорию
 
 @dp.message_handler(commands=["subs"])
 async def spisok_subs(message: Message):
