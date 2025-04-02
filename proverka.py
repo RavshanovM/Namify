@@ -700,11 +700,7 @@ def categorize_weather(desc):
     """
     desc = desc.lower()
 
-    if any(word in desc for word in ["дождь", "ливень", "гроза"]):
-        return "rain"
-    elif any(word in desc for word in ["снег", "метель", "снегопад"]):
-        return "snow"
-    elif any(word in desc for word in ["туман", "мгла"]):
+    if any(word in desc for word in ["туман", "мгла"]):
         return "fog"
     elif any(word in desc for word in ["облачно", "пасмурно"]):
         return "cloudy"
