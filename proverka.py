@@ -551,146 +551,206 @@ async def weather_monitor():
                     timezone_offset = data["city"]["timezone"]
                     now = datetime.utcnow() + timedelta(seconds=timezone_offset)
 
-                    # Получаем все прогнозы на следующие 6 часов
-                    next_hours = [now + timedelta(hours=i) for i in range(1, 7)]
-                    # Отдельно выделяем ближайший час для особых уведомлений
-                    next_hour = [now + timedelta(hours=1)]
+                    # Инициализируем структуры данных если нужно
+                    if user_id not in last_weather:
+                        last_weather[user_id] = {}
+                    if city not in last_weather[user_id]:
+                        last_weather[user_id][city] = {
+                            "hourly_forecasts": {},  # Для хранения прогнозов по часам
+                            "weather_periods": [],  # Для хранения периодов определенных погодных явлений
+                            "sent_notifications": {}  # Для отслеживания отправленных уведомлений
+                        }
 
-                    alerts = []
+                    # Массив для хранения всех прогнозов
+                    forecasts = []
+
+                    # Собираем все прогнозы на следующие 24 часа
                     for forecast in data["list"]:
                         dt_local = datetime.strptime(forecast["dt_txt"], "%Y-%m-%d %H:%M:%S") + timedelta(
                             seconds=timezone_offset)
 
-                        # Проверяем, находится ли время прогноза в интересующих нас часах
-                        forecast_hour = dt_local.replace(minute=0, second=0, microsecond=0)
+                        # Если прогноз в пределах 24 часов от текущего времени
+                        if now <= dt_local <= now + timedelta(hours=24):
+                            desc = forecast["weather"][0]["description"]
+                            wind_speed = forecast["wind"]["speed"]
+                            temp = forecast["main"]["temp"]
+                            category = categorize_weather(desc)
 
-                        # Проверяем для всех 6 часов
-                        for check_hour in next_hours:
-                            next_hour_normalized = check_hour.replace(minute=0, second=0, microsecond=0)
+                            forecast_hour = dt_local.replace(minute=0, second=0, microsecond=0)
+                            hour_key = forecast_hour.strftime('%Y%m%d%H')
 
-                            if forecast_hour == next_hour_normalized:
-                                desc = forecast["weather"][0]["description"]
-                                wind_speed = forecast["wind"]["speed"]
-                                temp = forecast["main"]["temp"]
+                            forecast_data = {
+                                "datetime": dt_local,
+                                "hour_key": hour_key,
+                                "desc": desc,
+                                "category": category,
+                                "wind_speed": wind_speed,
+                                "temp": temp
+                            }
 
-                                # Инициализируем структуры данных если нужно
-                                if user_id not in last_weather:
-                                    last_weather[user_id] = {}
-                                if city not in last_weather[user_id]:
-                                    last_weather[user_id][city] = {}
+                            forecasts.append(forecast_data)
 
-                                hour_key = dt_local.hour
-                                hours_ahead = int((dt_local - now).total_seconds() / 3600)
+                            # Сохраняем прогноз по часам
+                            last_weather[user_id][city]["hourly_forecasts"][hour_key] = forecast_data
 
-                                # Получаем предыдущий прогноз для сравнения
-                                prev_desc = last_weather[user_id][city].get(f"desc_{hour_key}", None)
-                                prev_temp = last_weather[user_id][city].get(f"temp_{hour_key}", None)
-                                prev_wind = last_weather[user_id][city].get(f"wind_{hour_key}", None)
-
-                                # Ключ для отслеживания отправленных напоминаний
-                                reminder_key = f"reminded_{hour_key}_{dt_local.strftime('%Y%m%d')}"
-                                one_hour_reminder_key = f"reminded_1hr_{hour_key}_{dt_local.strftime('%Y%m%d')}"
-
-                                # Проверяем условия для отправки уведомления
-                                should_send = False
-                                is_significant_change = False
-                                reason = []
-
-                                # 1. Проверяем изменение типа погоды (например, с ясно на дождь)
-                                if prev_desc and prev_desc != desc:
-                                    prev_category = categorize_weather(prev_desc)
-                                    curr_category = categorize_weather(desc)
-
-                                    if prev_category != curr_category:
-                                        should_send = True
-                                        is_significant_change = True
-                                        reason.append(f"Изменение погоды: {prev_desc} → {desc}")
-
-                                # 2. Проверяем сильный ветер (более 10 м/с)
-                                if wind_speed > 10 and (prev_wind is None or prev_wind <= 10):
-                                    should_send = True
-                                    is_significant_change = True
-                                    reason.append(f"Сильный ветер: {wind_speed} м/с")
-
-                                # 3. Проверяем резкое изменение температуры (более 5 градусов)
-                                if prev_temp is not None and abs(temp - prev_temp) > 5:
-                                    should_send = True
-                                    is_significant_change = True
-                                    change = temp - prev_temp
-                                    direction = "потепление" if change > 0 else "похолодание"
-                                    reason.append(f"Резкое {direction}: {abs(change):.1f}°C")
-
-                                # 4. Проверяем экстремальную температуру
-                                is_extreme_temp = False
-                                if (temp > 30 and (prev_temp is None or prev_temp <= 30)):
-                                    should_send = True
-                                    is_significant_change = True
-                                    is_extreme_temp = True
-                                    reason.append(f"Жаркая погода: {temp}°C")
-                                elif (temp < 0 and (prev_temp is None or prev_temp >= 0)):
-                                    should_send = True
-                                    is_significant_change = True
-                                    is_extreme_temp = True
-                                    reason.append(f"Температура ниже нуля: {temp}°C")
-
-                                # 5. Специальная проверка для повторного уведомления за 1 час до события
-                                is_rain_or_snow = categorize_weather(desc) in ["rain", "snow"]
-                                is_strong_wind = wind_speed > 10
-
-                                # Если это первый прогноз или есть значимое изменение
-                                if prev_desc is None:
-                                    should_send = True
-                                    reason.append("Первый прогноз")
-
-                                # Если условие отправки выполнено и есть значимое изменение погоды
-                                if should_send and is_significant_change:
-                                    # Проверяем, отправляли ли мы уже предупреждение о значимом событии
-                                    if (reminder_key not in last_weather[user_id][city] and
-                                            (is_rain_or_snow or is_strong_wind or is_extreme_temp)):
-
-                                        # Если это прогноз за ~6 часов, отправляем раннее уведомление
-                                        if hours_ahead >= 5:
-                                            time_desc = f"примерно через {hours_ahead} часов"
-                                            alert_msg = (
-                                                f"⚠️ Раннее предупреждение о погоде ⚠️\n"
-                                                f"🌍 {city.capitalize()} на {dt_local.strftime('%d.%m в %H:%M')} ({time_desc}):\n"
-                                                f"🌡 Температура: {temp}°C\n"
-                                                f"💨 Ветер: {wind_speed} м/с\n"
-                                                f"☁ {desc.capitalize()}\n"
-                                                f"{generate_weather_description(desc, wind_speed, temp)}\n\n"
-                                                f"Причина уведомления: {', '.join(reason)}"
-                                            )
-                                            alerts.append(alert_msg)
-                                            # Отмечаем, что отправили раннее предупреждение
-                                            last_weather[user_id][city][reminder_key] = True
-
-                                # Специальная проверка для уведомления за 1 час до особых событий
-                                if hours_ahead == 1 and one_hour_reminder_key not in last_weather[user_id][city]:
-                                    if is_rain_or_snow or is_strong_wind or is_extreme_temp:
-                                        alert_msg = (
-                                            f"🚨 Напоминание: важное погодное явление через 1 час 🚨\n"
-                                            f"🌍 {city.capitalize()} на {dt_local.strftime('%d.%m в %H:%M')}:\n"
-                                            f"🌡 Температура: {temp}°C\n"
-                                            f"💨 Ветер: {wind_speed} м/с\n"
-                                            f"☁ {desc.capitalize()}\n"
-                                            f"{generate_weather_description(desc, wind_speed, temp)}"
-                                        )
-                                        alerts.append(alert_msg)
-                                        # Отмечаем, что отправили напоминание за 1 час
-                                        last_weather[user_id][city][one_hour_reminder_key] = True
-
-                                # Сохраняем текущий прогноз для будущих сравнений
-                                last_weather[user_id][city][f"desc_{hour_key}"] = desc
-                                last_weather[user_id][city][f"temp_{hour_key}"] = temp
-                                last_weather[user_id][city][f"wind_{hour_key}"] = wind_speed
-
-                    if alerts:
-                        try:
-                            await bot.send_message(int(user_id), "\n\n".join(alerts))
-                        except Exception as e:
-                            logger.error(f"Ошибка отправки сообщения пользователю {user_id}: {e}")
+                    # Если у нас достаточно прогнозов, анализируем их для выявления периодов
+                    if forecasts:
+                        await analyze_weather_periods(user_id, city, forecasts, now)
 
         await asyncio.sleep(3600)  # Проверка раз в час
+
+
+async def analyze_weather_periods(user_id, city, forecasts, now):
+    """
+    Анализирует прогнозы и выявляет периоды определенных погодных явлений
+    """
+    # Сортируем прогнозы по времени
+    forecasts.sort(key=lambda x: x["datetime"])
+
+    # Находим периоды одинаковой погоды
+    periods = []
+    current_period = None
+
+    for forecast in forecasts:
+        if current_period is None:
+            # Начинаем новый период
+            current_period = {
+                "category": forecast["category"],
+                "start_time": forecast["datetime"],
+                "end_time": forecast["datetime"],
+                "description": forecast["desc"],
+                "forecasts": [forecast]
+            }
+        elif forecast["category"] == current_period["category"]:
+            # Продолжаем текущий период
+            current_period["end_time"] = forecast["datetime"]
+            current_period["forecasts"].append(forecast)
+        else:
+            # Завершаем текущий период и начинаем новый
+            periods.append(current_period)
+            current_period = {
+                "category": forecast["category"],
+                "start_time": forecast["datetime"],
+                "end_time": forecast["datetime"],
+                "description": forecast["desc"],
+                "forecasts": [forecast]
+            }
+
+    # Добавляем последний период
+    if current_period:
+        periods.append(current_period)
+
+    # Обновляем периоды погоды
+    last_weather[user_id][city]["weather_periods"] = periods
+
+    # Проверяем паттерны изменения погоды
+    await check_weather_patterns(user_id, city, periods, now)
+
+
+async def check_weather_patterns(user_id, city, periods, now):
+    """
+    Проверяет паттерны изменения погоды и отправляет содержательные уведомления
+    """
+    if len(periods) < 2:
+        return  # Недостаточно периодов для анализа
+
+    alerts = []
+
+    for i in range(len(periods) - 1):
+        current_period = periods[i]
+        next_period = periods[i + 1]
+
+        # Формируем уникальный ключ для этой пары периодов
+        period_pair_key = f"{current_period['start_time'].strftime('%Y%m%d%H')}_to_{next_period['start_time'].strftime('%Y%m%d%H')}"
+
+        # Проверяем, отправляли ли мы уже уведомление об этом переходе
+        if period_pair_key in last_weather[user_id][city]["sent_notifications"]:
+            continue
+
+        # Временные рамки для отправки уведомлений
+        hours_until_change = (next_period["start_time"] - now).total_seconds() / 3600
+
+        # Уведомляем только о будущих изменениях в пределах 24 часов
+        if 0 <= hours_until_change <= 24:
+            # Проверяем различные паттерны
+
+            # 1. Прекращение осадков на короткое время
+            if (current_period["category"] in ["rain", "snow"] and
+                    next_period["category"] not in ["rain", "snow"]):
+
+                # Если есть еще один период после следующего
+                if i + 2 < len(periods) and periods[i + 2]["category"] in ["rain", "snow"]:
+                    break_duration = (periods[i + 2]["start_time"] - next_period["start_time"]).total_seconds() / 3600
+
+                    # Если перерыв короткий (менее 6 часов)
+                    if break_duration <= 6:
+                        # Форматируем сообщение о временном перерыве в осадках
+                        weather_type = "дождь" if current_period["category"] == "rain" else "снег"
+                        start_break = next_period["start_time"].strftime("%H:%M")
+                        end_break = periods[i + 2]["start_time"].strftime("%H:%M")
+
+                        msg = (
+                            f"⏱️ Прогноз изменения осадков в {city.capitalize()}:\n"
+                            f"Ожидается перерыв в осадках ({weather_type}) с {start_break} до {end_break} "
+                            f"({int(break_duration)} час{'а' if 1 < break_duration < 5 else 'ов'})\n"
+                            f"После перерыва осадки возобновятся."
+                        )
+                        alerts.append(msg)
+
+                        # Отмечаем, что отправили уведомление для этой пары периодов
+                        last_weather[user_id][city]["sent_notifications"][period_pair_key] = True
+                        continue
+
+            # 2. Начало осадков
+            if (current_period["category"] not in ["rain", "snow"] and
+                    next_period["category"] in ["rain", "snow"]):
+
+                rain_start = next_period["start_time"].strftime("%H:%M")
+                weather_type = "дождь" if next_period["category"] == "rain" else "снег"
+
+                # Оцениваем продолжительность осадков
+                rain_duration = (next_period["end_time"] - next_period["start_time"]).total_seconds() / 3600
+
+                duration_text = ""
+                if rain_duration < 3:
+                    duration_text = f"(кратковременный, около {int(rain_duration)} час{'а' if 1 < rain_duration < 5 else 'ов'})"
+                elif rain_duration >= 3:
+                    duration_text = f"(продолжительный, около {int(rain_duration)} час{'ов' if rain_duration >= 5 else 'а'})"
+
+                msg = (
+                    f"🌧️ Прогноз начала осадков в {city.capitalize()}:\n"
+                    f"Ожидается {weather_type} с {rain_start} {duration_text}"
+                )
+                alerts.append(msg)
+
+                # Отмечаем, что отправили уведомление для этой пары периодов
+                last_weather[user_id][city]["sent_notifications"][period_pair_key] = True
+
+            # 3. Резкое изменение температуры между периодами
+            curr_avg_temp = sum(f["temp"] for f in current_period["forecasts"]) / len(current_period["forecasts"])
+            next_avg_temp = sum(f["temp"] for f in next_period["forecasts"]) / len(next_period["forecasts"])
+
+            temp_diff = next_avg_temp - curr_avg_temp
+
+            if abs(temp_diff) > 5:
+                change_time = next_period["start_time"].strftime("%H:%M")
+                direction = "потепления" if temp_diff > 0 else "похолодания"
+
+                msg = (
+                    f"🌡️ Прогноз резкого изменения температуры в {city.capitalize()}:\n"
+                    f"Ожидается {direction} на {abs(temp_diff):.1f}°C с {change_time}"
+                )
+                alerts.append(msg)
+
+                # Отмечаем, что отправили уведомление для этой пары периодов
+                last_weather[user_id][city]["sent_notifications"][period_pair_key] = True
+
+    # Отправляем все уведомления одним сообщением
+    if alerts:
+        try:
+            await bot.send_message(int(user_id), "\n\n".join(alerts))
+        except Exception as e:
+            logger.error(f"Ошибка отправки сообщения пользователю {user_id}: {e}")
 
 
 # Вспомогательная функция для категоризации типов погоды
@@ -700,7 +760,11 @@ def categorize_weather(desc):
     """
     desc = desc.lower()
 
-    if any(word in desc for word in ["туман", "мгла"]):
+    if any(word in desc for word in ["дождь", "ливень", "гроза"]):
+        return "rain"
+    elif any(word in desc for word in ["снег", "метель", "снегопад"]):
+        return "snow"
+    elif any(word in desc for word in ["туман", "мгла"]):
         return "fog"
     elif any(word in desc for word in ["облачно", "пасмурно"]):
         return "cloudy"
