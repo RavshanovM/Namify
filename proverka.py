@@ -686,8 +686,8 @@ async def check_weather_patterns(user_id, city, periods, now):
                     if break_duration <= 6:
                         # Форматируем сообщение о временном перерыве в осадках
                         weather_type = "дождь" if current_period["category"] == "rain" else "снег"
-                        start_break = next_period["start_time"].strftime("%H:%M")
-                        end_break = periods[i + 2]["start_time"].strftime("%H:%M")
+                        start_break = next_period["start_time"].strftime("%d.%m в %H:%M")
+                        end_break = periods[i + 2]["start_time"].strftime("%d.%m в %H:%M")
 
                         msg = (
                             f"⏱️ Прогноз изменения осадков в {city.capitalize()}:\n"
@@ -704,8 +704,9 @@ async def check_weather_patterns(user_id, city, periods, now):
             # 2. Начало осадков
             if (current_period["category"] not in ["rain", "snow"] and
                     next_period["category"] in ["rain", "snow"]):
+                # Изменить в коде, где формируются сообщения
 
-                rain_start = next_period["start_time"].strftime("%H:%M")
+                rain_start = next_period["start_time"].strftime("%d.%m в %H:%M")
                 weather_type = "дождь" if next_period["category"] == "rain" else "снег"
 
                 # Оцениваем продолжительность осадков
@@ -733,7 +734,7 @@ async def check_weather_patterns(user_id, city, periods, now):
             temp_diff = next_avg_temp - curr_avg_temp
 
             if abs(temp_diff) > 5:
-                change_time = next_period["start_time"].strftime("%H:%M")
+                change_time = next_period["start_time"].strftime("%d.%m в %H:%M")
                 direction = "потепления" if temp_diff > 0 else "похолодания"
 
                 msg = (
