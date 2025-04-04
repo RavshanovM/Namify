@@ -597,7 +597,7 @@ async def weather_monitor():
                     if forecasts:
                         await analyze_weather_periods(user_id, city, forecasts, now)
 
-        await asyncio.sleep(3600)  # Проверка раз в час
+        await asyncio.sleep(7200)  # Проверка раз в 3 час
 
 
 async def analyze_weather_periods(user_id, city, forecasts, now):
@@ -713,8 +713,10 @@ async def check_weather_patterns(user_id, city, periods, now):
                 rain_duration = (next_period["end_time"] - next_period["start_time"]).total_seconds() / 3600
 
                 duration_text = ""
-                if rain_duration < 3:
+                if 3 > rain_duration > 1:
                     duration_text = f"(кратковременный, около {int(rain_duration)} час{'а' if 1 < rain_duration < 5 else 'ов'})"
+                elif 1 >= rain_duration > 0:
+                    duration_text = f"(кратковременный, около {int(rain_duration*60)} минут"
                 elif rain_duration >= 3:
                     duration_text = f"(продолжительный, около {int(rain_duration)} час{'ов' if rain_duration >= 5 else 'а'})"
 
@@ -733,7 +735,7 @@ async def check_weather_patterns(user_id, city, periods, now):
 
             temp_diff = next_avg_temp - curr_avg_temp
 
-            if abs(temp_diff) > 5:
+            if abs(temp_diff) > 6:
                 change_time = next_period["start_time"].strftime("%d.%m в %H:%M")
                 direction = "потепления" if temp_diff > 0 else "похолодания"
 
