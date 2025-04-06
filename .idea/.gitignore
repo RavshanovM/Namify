@@ -1,3 +1,21 @@
 # Default ignored files
 /shelf/
 /workspace.xml
+# Игнорируем переменные окружения
+.env
+
+# Кэш и временные файлы Python
+__pycache__/
+*.pyc
+*.pyo
+
+# Виртуальные окружения (если используешь)
+venv/
+env/
+
+# Файлы/папки IDE
+.idea/
+.vscode/
+
+# Файлы журналов и временные данные
+*.log
